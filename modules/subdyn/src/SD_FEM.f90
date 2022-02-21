@@ -84,7 +84,7 @@ MODULE SD_FEM
 
   ! Implementation Flags
   LOGICAL, PARAMETER :: DEV_VERSION    = .false.
-  LOGICAL, PARAMETER :: BC_Before_CB   = .true.
+  LOGICAL, PARAMETER :: BC_Before_CB   = .false.
   LOGICAL, PARAMETER :: ANALYTICAL_LIN = .true.
   LOGICAL, PARAMETER :: GUYAN_RIGID_FLOATING = .true.
 

@@ -20,6 +20,7 @@
 !! No dependency with SubDyn types and representation
 MODULE FEM
   USE NWTC_Library
+  USE SubDyn_Types  
   IMPLICIT NONE
 
   INTEGER, PARAMETER  :: FEKi = R8Ki  ! Define the kind to be used for FEM
@@ -408,8 +409,10 @@ END SUBROUTINE BreakSysMtrx
 !!    - Possibility to get more CB modes using the input nM_Out>nM
 !!
 !! NOTE: generic code
-SUBROUTINE CraigBamptonReduction(MM, KK, IDR, nR, IDL, nL, nM, nM_Out, MBB, MBM, KBB, PhiL, PhiR, OmegaL, ErrStat, ErrMsg, FG, FGR, FGL, FGB, FGM, CC, CBB, CBM, CMM) 
+SUBROUTINE CraigBamptonReduction(Init, p, MM, KK, IDR, nR, IDL, nL, nM, nM_Out, MBB, MBM, KBB, PhiL, PhiR, OmegaL, ErrStat, ErrMsg, FG, FGR, FGL, FGB, FGM, CC, CBB, CBM, CMM) 
    use NWTC_LAPACK, only: LAPACK_GEMV
+   TYPE(SD_InitType),      INTENT(INOUT) :: Init        ! Input data for initialization routine   
+   TYPE(SD_ParameterType), INTENT(INOUT) :: p        ! Parameters   
    REAL(FEKi),             INTENT(IN   ) :: MM(:, :) !< Mass matrix
    REAL(FEKi),             INTENT(IN   ) :: KK(:, :) !< Stiffness matrix
    INTEGER(IntKi),         INTENT(IN   ) :: nR
@@ -418,6 +421,7 @@ SUBROUTINE CraigBamptonReduction(MM, KK, IDR, nR, IDL, nL, nM, nM_Out, MBB, MBM,
    INTEGER(IntKi),         INTENT(IN   ) :: IDL(nL)   !< Indices of interior DOFs
    INTEGER(IntKi),         INTENT(IN   ) :: nM        !< Number of CB modes
    INTEGER(IntKi),         INTENT(IN   ) :: nM_Out    !< Number of modes returned for PhiL & OmegaL
+  ! INTEGER(IntKi),         INTENT(IN   ) :: nI        !< Number of Interface DOF   
    REAL(FEKi),             INTENT(  OUT) :: MBB( nR, nR)     !< Reduced Guyan Mass Matrix
    REAL(FEKi),             INTENT(  OUT) :: KBB( nR, nR)     !< Reduced Guyan Stiffness matrix
    REAL(FEKi),             INTENT(  OUT) :: MBM( nR, nM)     !< Cross term
@@ -462,7 +466,7 @@ SUBROUTINE CraigBamptonReduction(MM, KK, IDR, nR, IDL, nL, nM, nM_Out, MBB, MBM,
    endif
    call BreakSysMtrx(MM, KK, IDR, IDL, nR, nL, MRR, MLL, MRL, KRR, KLL, KRL, FG=FG, FGR=FGR, FGL=FGL, CC=CC, CRR=CRR, CLL=CLL, CRL=CRL)
    ! --- CB reduction
-   call CraigBamptonReduction_FromPartition( MRR, MLL, MRL, KRR, KLL, KRL, nR, nL, nM, nM_Out,& !< Inputs 
+   call CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL, KRL, nR, nL, nM, nM_Out,& !< Inputs 
                               MBB, MBM, KBB, PhiL, PhiR, OmegaL, ErrStat2, ErrMsg2, & !< Outputs
                               CRR=CRR, CLL=CLL, CRL=CRL,& !< Optional inputs
                               CBB=CBB, CBM=CBM, CMM=CMM)  !< Optional Outputs
@@ -517,14 +521,17 @@ END SUBROUTINE CraigBamptonReduction
 !!    - Possibility to get more CB modes using the input nM_Out>nM (e.g. for static improvement)
 !!
 !! NOTE: generic code
-SUBROUTINE CraigBamptonReduction_FromPartition( MRR, MLL, MRL, KRR, KLL, KRL, nR, nL, nM, nM_Out,&
+SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL, KRL, nR, nL, nM, nM_Out,&
                      MBB, MBM, KBB, PhiL, PhiR, OmegaL, ErrStat, ErrMsg,&
                      CRR, CLL, CRL, CBB, CBM, CMM)
    USE NWTC_LAPACK, only: LAPACK_getrs, LAPACK_getrf, LAPACK_gemm
+   TYPE(SD_InitType),     INTENT(INOUT)  :: Init        ! Input data for initialization routine  
+   TYPE(SD_ParameterType), INTENT(INOUT) :: p        ! Parameters    
    INTEGER(IntKi),         INTENT(  in)  :: nR
    INTEGER(IntKi),         INTENT(  in)  :: nL
    INTEGER(IntKi),         INTENT(  in)  :: nM_Out
    INTEGER(IntKi),         INTENT(  in)  :: nM
+  ! INTEGER(IntKi),         INTENT(  in)  :: nI   
    REAL(FEKi),             INTENT(  IN)  :: MRR( nR, nR) !< Partitioned mass and stiffness matrices
    REAL(FEKi),             INTENT(  IN)  :: MLL( nL, nL) 
    REAL(FEKi),             INTENT(  IN)  :: MRL( nR, nL)
@@ -549,7 +556,15 @@ SUBROUTINE CraigBamptonReduction_FromPartition( MRR, MLL, MRL, KRR, KLL, KRL, nR
    REAL(FEKi) , allocatable :: Mu(:, :)          ! matrix for normalization Mu(p%nDOFL, p%nDOFL) [bjj: made allocatable to try to avoid stack issues]
    REAL(FEKi) , allocatable :: Temp(:, :)        ! temp matrix for intermediate steps [bjj: made allocatable to try to avoid stack issues]
    REAL(FEKi) , allocatable :: PhiR_T_MLL(:,:)   ! PhiR_T_MLL(nR,nL) = transpose of PhiR * MLL (temporary storage)
-   INTEGER                  :: I        !counter
+   ! Seismic Parameters
+   REAL(ReKi) , allocatable               :: RR(:)             ! RR(p%DOFR) , influece vector on R dofs
+   REAL(ReKi) , allocatable               :: RI(:)             ! RI(p%DOFI) , influece vector on I dofs
+   REAL(ReKi) , allocatable               :: RL(:)             ! RR(p%DOFL) , influece vector on L dofs
+   REAL(ReKi) , allocatable               :: RB(:)             ! RR(p%DOFR-p%DOFI) , influece vector on b dofs
+   REAL(ReKi) , allocatable               :: OmegaDamp2(:, :)
+   REAL(ReKi) , allocatable               :: NOmegaM2(:)
+   REAL(ReKi) , allocatable               :: InvPhiM(:, :)   
+   INTEGER                  :: I, J        !counter
    INTEGER                  :: ipiv(nL) ! length min(m,n) (See LAPACK documentation)
    INTEGER(IntKi)           :: ErrStat2
    CHARACTER(ErrMsgLen)     :: ErrMsg2
@@ -664,6 +679,144 @@ SUBROUTINE CraigBamptonReduction_FromPartition( MRR, MLL, MRL, KRR, KLL, KRL, nR
          CBM=0.0_FEKi
       endif
    endif
+   
+     IF (p%SeismicInp) THEN
+
+   !................................
+   ! set vectors related to seismic input (assumed horizontal only)
+   ! The parts of the vectors that do not depend on t are set here
+   !................................
+   
+      ! Set Influece vectors RR and RL
+
+    CALL AllocAry( RL,  nL, 'Influence vector RL', ErrStat2, ErrMsg2); if(Failed()) return
+    CALL AllocAry( RR,  p%nDOFR__, 'Influence vector RR', ErrStat2, ErrMsg2); if(Failed()) return 
+    CALL AllocAry( RI,  p%nDOFI__, 'Influence vector RI', ErrStat2, ErrMsg2); if(Failed()) return !Dofi
+    CALL AllocAry( RB,  p%nDOFR__ - p%nDOFI__, 'Influence vector RB', ErrStat2, ErrMsg2); if(Failed()) return
+  !  CALL AllocAry( p%RRbase, p%nDOFR__ - p%nDOFI__, 'Influence vector RRbase', ErrStat2, ErrMsg2); if(Failed()) return
+    
+
+   RR = 0.0_ReKi
+   RI = 0.0_ReKi
+   RL = 0.0_ReKi
+   RB = 0.0_ReKi
+   
+   J = 0
+
+   DO I = 1,p%nDOFR__
+      J = J + 1
+      SELECT CASE (J)
+         CASE (1); RR(I) = COS((p%UgDir)*Pi_D/180.0_ReKi)  ! The argument of COS and SIN is radians. UgDir is in º
+         CASE (2); RR(I) = SIN((p%UgDir)*Pi_D/180.0_ReKi)
+         CASE (6); J = 0
+      END SELECT 
+   END DO
+   
+   p%RRbase = RR(1:p%nDOFR__-p%nDOFI__) !! RR es DOFR, p%RRbase 
+   p%PhiRbase = PhiR(        :,1:p%nDOFR__-p%nDOFI__) ! PhiR en base
+     
+   DO I = 1,p%nDOFI__ !DOFI
+      J = J + 1
+      SELECT CASE (J)
+         CASE (1); RI(I) = COS((p%UgDir)*Pi_D/180.0_ReKi)  ! The argument of COS and SIN is radians. UgDir is in º
+         CASE (2); RI(I) = SIN((p%UgDir)*Pi_D/180.0_ReKi)
+         CASE (6); J = 0
+      END SELECT 
+   END DO
+
+   J = 0
+   DO I = 1,nL
+      J = J + 1
+      SELECT CASE (J)
+         CASE (1); RL(I) = COS((p%UgDir)*Pi_D/180.0_ReKi)  ! The argument of COS and SIN is radians. UgDir is in º
+         CASE (2); RL(I) = SIN((p%UgDir)*Pi_D/180.0_ReKi)
+         CASE (6); J = 0
+      END SELECT 
+   END DO
+   
+         J = 0
+       DO I = 1,p%nDOFR__-p%nDOFI__
+          J = J + 1
+          SELECT CASE (J)
+             CASE (1); RB(I) = COS((p%UgDir)*Pi_D/180.0_ReKi)  ! The argument of COS and SIN is radians. UgDir is in º
+             CASE (2); RB(I) = SIN((p%UgDir)*Pi_D/180.0_ReKi)
+             CASE (6); J = 0
+          END SELECT 
+       END DO
+       
+       
+          ! -------------------
+          ! Seismic Parameters
+          ! -------------------     
+          
+      CALL AllocAry(InvPhiM, nM , nM , 'InvPhiM'      , ErrStat2, ErrMsg2); if(Failed()) return
+      InvPhiM = 0.0_ReKi  ! Cuidado
+      
+      IF ( nM > 0) THEN ! Tener en cuenta invphiM=0 cuando Nmodes=0 --> IF ( p%Nmodes > 0) THEN
+      InvPhiM = 0.0_ReKi! Inv(PhiL(:,1:nM),nM) 
+      
+      ! Problema 1, quito invPhiM
+      p%FISISC_U = 0.0_ReKi
+     ! (MATMUL(CBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI)) !+ MATMUL(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : ) ,matmul(InvPhiM, RL - matmul(PhiR,RR) ) ))
+      
+      Else 
+      
+      p%FISISC_U = 0.0_ReKi
+      !(MATMUL(CBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI)) !+ MATMUL(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : ) ,RL ))
+      
+      END IF
+      
+                                              
+      p%FISISK_U = MATMUL(KBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI) ! KBBb * RI
+
+          
+          
+      p%FISISM_U = MATMUL(MBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__,1:p%nDOFR__-p%nDOFI__),RB)  !MIB * RB     
+      
+         IF ( nM .EQ. 0) THEN
+
+      p%FMSISK_U = 0.0_ReKi
+      p%FMSISC_U = 0.0_ReKi
+      p%FMSISM_U = 0.0_ReKi
+      
+       ELSE
+
+      CALL AllocAry( OmegaDamp2 , nM , nM , 'OmegaDamp2' , ErrStat2, ErrMsg2); if(Failed()) return
+      CALL AllocAry( NOmegaM2 , nM , 'NomegaM2' , ErrStat2, ErrMsg2); if(Failed()) return
+
+      OmegaDamp2 = 0.0_ReKi
+      NOmegaM2 = 0.0_ReKi 
+
+      DO I = 1, nM
+        OmegaDamp2(I,I) = 2.0_ReKi * OmegaL(I) * Init%JDampings(I) 
+        NOmegaM2(I)  = -1.0_ReKi * OmegaL(I) * OmegaL(I)
+      ENDDO
+      ! Problema 2
+      p%FMSISK_U = 0.0_ReKi
+      !NOmegaM2(I-1) * matmul(InvPhiM, RL - matmul(PhiR,RR) ) !KMB ES 0, SOLO APARECE KLL=OMEGA2  
+
+
+      p%FMSISC_U = 0.0_ReKi
+      !MATMUL(TRANSPOSE(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : )),RI) !+ MATMUL(CMM(:, :)+ OmegaDamp2(I-1,I-1) , MATMUL(InvPhiM, RL - MATMUL(PhiR,RR) )  )
+
+
+      p%FMSISM_U = MATMUL(TRANSPOSE(MBM(1:p%nDOFR__-p%nDOFI__,:)),RB) ! Mmb --> SAle de MMB, Mmb * RB
+      
+      DEALLOCATE(OmegaDamp2)
+      DEALLOCATE(NOmegaM2)
+      DEALLOCATE(InvPhiM)
+      
+      ENDIF
+      
+      
+      
+   
+   IF (ALLOCATED(RR)) DEALLOCATE(RR)
+   IF (ALLOCATED(RL)) DEALLOCATE(RL)
+   IF (ALLOCATED(RB)) DEALLOCATE(RB)
+   IF (ALLOCATED(RI)) DEALLOCATE(RI)   
+   
+   ENDIF  ! End IF (p%SeismicInp)   
         
    call CleanUp()
 CONTAINS
@@ -1412,5 +1565,41 @@ SUBROUTINE PseudoInverse(A, Ainv, ErrStat, ErrMsg)
    !print*,'Rank',rank
    !   Ainv=transpose(matmul(matmul(U(:,1:r),S_inv(1:r,1:r)),Vt(1:r,:)))
    END SUBROUTINE PseudoInverse
+   
+   ! -------------------------------------------------------------------------------
+! Returns the inverse of a matrix calculated by finding the LU
+! decomposition.  Depends on LAPACK.
+function inv(A,n) result(Ainv)
+  integer(IntKi)            , intent(in) :: n
+  real(ReKi), dimension(:,:), intent(in) :: A
+  real(ReKi), dimension(n,n) :: Ainv
+
+  real(ReKi), dimension(n) :: work  ! work array for LAPACK
+  integer, dimension(n) :: ipiv   ! pivot indices
+  integer :: info
+
+  ! External procedures defined in LAPACK
+  external DGETRF
+  external DGETRI
+
+  ! Store A in Ainv to prevent it from being overwritten by LAPACK
+  Ainv = A
+
+  ! DGETRF computes an LU factorization of a general M-by-N matrix A
+  ! using partial pivoting with row interchanges.
+  call DGETRF(n, n, Ainv, n, ipiv, info)
+
+  if (info /= 0) then
+     stop 'Matrix is numerically singular!'
+  end if
+
+  ! DGETRI computes the inverse of a matrix using the LU factorization
+  ! computed by DGETRF.
+  call DGETRI(n, Ainv, n, ipiv, work, n, info)
+
+  if (info /= 0) then
+     stop 'Matrix inversion failed!'
+  end if
+end function inv   
 
 END MODULE FEM

@@ -16,7 +16,7 @@ typedef  ^  MeshAuxDataType  INTEGER  NodeIDs   {:}           -  -  "Node IDs as
 typedef  ^  MeshAuxDataType  INTEGER  ElmIDs    {:}{:}        -  -  "Element IDs connected to each NodeIDs; max 10 elements"
 typedef  ^  MeshAuxDataType  INTEGER  ElmNds    {:}{:}        -  -  "Flag to indicate 1st or 2nd node of element for each ElmIDs"
 typedef  ^  MeshAuxDataType  R8Ki     Me        {:}{:}{:}{:}  -  -  "Mass matrix connected to each joint element for outAll output"
-typedef  ^  MeshAuxDataType  R8Ki     Ke        {:}{:}{:}{:}  -  -  "Mass matrix connected to each joint element for outAll output"
+typedef  ^  MeshAuxDataType  R8Ki     Ke        {:}{:}{:}{:}  -  -  "Stifness matrix connected to each joint element for outAll output"
 typedef  ^  MeshAuxDataType  R8Ki     Fg        {:}{:}{:}     -  -  "Gravity load vector connected to each joint element for requested member output"
 
 # CB_MatArrays: Matrices and arrays for CB summary
@@ -154,6 +154,9 @@ typedef  ^    MiscVarType    ReKi           U_full_elast  {:}  -  -  "Elastic di
 typedef  ^    MiscVarType    ReKi           U_red          {:}  -  -  
 typedef  ^    MiscVarType    ReKi           U_red_dot      {:}  -  -  
 typedef  ^    MiscVarType    ReKi           U_red_dotdot   {:}  -  -  
+typedef  ^    MiscVarType    ReKi           Ug                  -  - "Input ground displacement at current time"
+typedef  ^    MiscVarType    ReKi           Udotg               -  - "Input ground velocity at current time"
+typedef  ^    MiscVarType    ReKi           Uddotg              -  - "Input ground acceleration at current time"
 typedef  ^    MiscVarType    ReKi           FC_unit   {:}   -  -   "Cable Force vector (for varying cable load, of unit cable load)"  N
 typedef  ^    MiscVarType    ReKi           SDWrOutput {:} -  -    "Data from previous step to be written to a SubDyn output file"
 typedef  ^    MiscVarType    DbKi           LastOutTime -  -  -    "The time of the most recent stored output data"  "s"
@@ -165,6 +168,8 @@ typedef  ^    MiscVarType    ReKi           Fext_red  {:} -  -     "External loa
 # ============================== Parameters ============================================================================================================================================
 # --- Parameters - Algo
 typedef  ^  ParameterType   DbKi           SDDeltaT      -  -  -  "Time step (for integration of continuous states)"  seconds
+typedef  ^  ParameterType   DbKi	    SDDeltaTUg	   -  -  -	"Time step of seismic input signal"	seconds
+typedef  ^  ParameterType   Logical        SeismicInp    -  -  -	"Existence of seismic input Ug (flag)"
 typedef  ^  ParameterType   IntKi          IntMethod     -  -  -  "Integration Method (1/2/3)Length of y2 array"
 # --- Parameters - FEM
 typedef  ^  ParameterType  INTEGER         nDOF          -  -  -  "Total degree of freedom"
@@ -209,6 +214,12 @@ typedef  ^  ParameterType  ReKi    KBB  {:}{:}     -  -  "Guyan Stiffness Matrix
 typedef  ^  ParameterType  ReKi    CBB  {:}{:}     -  -  "Guyan Damping Matrix after C-B reduction"
 typedef  ^  ParameterType  ReKi    CMM  {:}{:}     -  -  "CB damping matrix"
 typedef  ^  ParameterType  ReKi    MBM  {:}{:}     -  -  "Matrix after C-B reduction"
+typedef  ^  ParameterType  ReKi    FISISK_U  {:}   -	-	"Component of right hand side due to seismic input signal"
+typedef  ^  ParameterType  ReKi    FMSISK_U  {:}   -	-	"Component of right hand side due to seismic input signal"
+typedef  ^  ParameterType  ReKi    FISISC_U  {:}   -	-	"Component of right hand side due to seismic input signal"
+typedef  ^  ParameterType  ReKi    FMSISC_U  {:}   -	-	"Component of right hand side due to seismic input signal"
+typedef  ^  ParameterType  ReKi    FISISM_U  {:}   -	-	"Component of right hand side due to seismic input signal"
+typedef  ^  ParameterType  ReKi    FMSISM_U  {:}   -	-	"Component of right hand side due to seismic input signal"
 typedef  ^  ParameterType  ReKi    PhiL_T  {:}{:}  -  -  "Transpose of Matrix of C-B  modes"
 typedef  ^  ParameterType  ReKi    PhiLInvOmgL2  {:}{:}  -  -  "Matrix of C-B  modes times the inverse of OmegaL**2 (Phi_L*(Omg**2)^-1)"
 typedef  ^  ParameterType  ReKi    KLLm1  {:}{:}   -  -  "KLL^{-1}, inverse of matrix KLL, for static solve only"
@@ -216,7 +227,12 @@ typedef  ^  ParameterType  ReKi    AM2Jac  {:}{:}  -  -  "Jacobian (factored) fo
 typedef  ^  ParameterType  IntKi   AM2JacPiv  {:}  -  -  "Pivot array for Jacobian factorization (for Adams-Boulton 2nd order Integration)"
 typedef  ^  ParameterType  ReKi    TI  {:}{:}      -  -  "Matrix to calculate TP reference point reaction at top of structure"
 typedef  ^  ParameterType  ReKi    TIreact  {:}{:} -  -  "Matrix to calculate single point reaction at base of structure"
+typedef  ^  ParameterType  ReKi    UgData	{:}{:}	-	-	"time, input ground displacement, velocity and acceleration"
+typedef  ^  ParameterType  ReKi    UgDir   -	-	-	"Direction of shaking. 0-90 degrees (0 => shaking in x, 90=> shaking in y)"
+typedef  ^  ParameterType  ReKi    RRbase  {:}     -	-	"Influence vector of ground shaking (base part of the vector)"
+typedef  ^  ParameterType  ReKi    PhiRbase {:}{:} -	-	"PhiRbase"
 # --- Parameters - Partitioning I L C Y, R=[C I]
+typedef  ^  ParameterType  IntKi  NtUg          -  -  -  "Number of data points in seismic input signal file"
 typedef  ^  ParameterType  IntKi  nNodes        -  -  -  "Total number of nodes"
 typedef  ^  ParameterType  IntKi  nNodes_I      -  -  -  "Number of Interface nodes"
 typedef  ^  ParameterType  IntKi  nNodes_L      -  -  -  "Number of Internal nodes"

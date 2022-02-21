@@ -438,6 +438,8 @@ SUBROUTINE SD_UpdateStates( t, n, Inputs, InputTimes, p, x, xd, z, OtherState, m
       ! Initialize variables
       ErrStat   = ErrID_None           ! no error has occurred
       ErrMsg    = ""
+         
+      IF ( p%SeismicInp ) CALL InterpSeismicSignal(t, p, m)         
             
       IF ( p%nDOFM == 0) RETURN ! no retained modes = no states
         
@@ -481,6 +483,7 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
       REAL(ReKi)                   :: Y1_Guy_R(6)
       REAL(ReKi)                   :: Y1_Guy_L(6)
       REAL(ReKi)                   :: Y1_Utp(6)
+      REAL(ReKi)                   :: Y1_Seismic(6)      
       REAL(ReKi)                   :: Y1_GuyanLoadCorrection(3) ! Lever arm moment contributions due to interface displacement
       REAL(ReKi)                   :: udotdot_TP(6)
       INTEGER(IntKi), pointer      :: DOFList(:)
@@ -541,6 +544,16 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
          m%UL_dot        = matmul( p%PhiM,  x%qmdot )
          m%UL_dotdot     = matmul( p%C2_61, x%qm    )    + matmul( p%C2_62   , x%qmdot )    & 
                          + matmul( p%D2_63, udotdot_TP ) + matmul( p%D2_64,    m%F_L   )
+                         
+          IF (p%SeismicInp) THEN
+            m%UL         =  m%UL        + matmul ( p%PhiRbase , p%RRbase ) * m%Ug 
+            m%UL_dot     =  m%UL_dot    + matmul ( p%PhiRbase , p%RRbase ) * m%Udotg 
+            m%UL_dotdot  =  m%UL_dotdot + matmul (p%PhiM, m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Udotg * p%FMSISM_U) &
+                                        + matmul ( p%PhiRbase , p%RRbase ) * m%Uddotg
+            !+ matmul ( p%PhiM ,  m%Ug * p%FMIMKP + m%Udotg * p%FMIMCP - m%Udotg * p%FMIMMP + m%PHIg * p%FMIMKP_PHI + m%PHIdotg * p%FMIMCP_PHI - m%PHIdotg * p%FMIMMP_PHI + m%Vg * p%FMIMKP_V + m%Vdotg * p%FMIMCP_V - m%Vdotg * p%FMIMMP_V ) &
+                                        !+ matmul ( p%PhiRbase , p%RRbase ) * m%Uddotg  
+         ENDIF                         
+                         
       end if
       ! Static improvement (modify UL)
       if (p%SttcSolve/=idSIM_None) then
@@ -673,6 +686,9 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
       ! --- Outputs 1, Y1=-F_TP, reaction force from SubDyn to ElastoDyn (stored in y%Y1Mesh)
       ! --------------------------------------------------------------------------------
       ! --- Special case for floating with extramoment
+      
+      Y1_Seismic = 0.0_ReKi !No signal      
+      
       if (p%GuyanLoadCorrection.and.p%Floating) then
          Y1_CB_L = - (matmul(p%D1_141, m%F_L)) ! Uses rotated loads
       endif
@@ -696,12 +712,23 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
       endif
       if ( p%nDOFM > 0) then
          Y1_CB = -( matmul(p%C1_11, x%qm) + matmul(p%C1_12, x%qmdot) )
+         IF (p%SeismicInp) THEN
+           Y1_Seismic = - ( matmul(p%MBM ,  m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Uddotg * p%FMSISM_U)      &
+                     - (matmul( TRANSPOSE(p%TI),m%Ug * p%FISISK_U + m%Udotg * p%FISISC_U - m%Uddotg * p%FISISM_U )))     
+           !Y1 - ( matmul(p%MBM ,  m%Ug * p%FMIMKP + m%Udotg * p%FMIMCP - m%Uddotg * p%FMIMMP + m%PHIg * p%FMIMKP_PHI + m%PHIdotg * p%FMIMCP_PHI - m%PHIddotg * p%FMIMMP_PHI  + m%Vg * p%FMIMKP_V + m%Vdotg * p%FMIMCP_V - m%Vddotg * p%FMIMMP_V)      &
+                  !   - (matmul( TRANSPOSE(p%TI),m%Ug * p%FRIMKP + m%Udotg * p%FRIMCP - m%Uddotg * p%FRIMMP + m%PHIg * p%FRIMKP_PHI + m%PHIdotg * p%FRIMCP_PHI - m%PHIddotg * p%FRIMMP_PHI + m%Vg * p%FRIMKP_V + m%Vdotg * p%FRIMCP_V - m%Vddotg * p%FRIMMP_V )))
+          ENDIF          
+         
          if (p%GuyanLoadCorrection.and.p%Floating) then
             Y1_CB = matmul(RRb2g, Y1_CB) !>>> Rotate All
          endif
       else
          Y1_CB = 0.0_ReKi
-      endif
+        ! IF (p%SeismicInp) THEN
+         !  Y1_Seismic = - ( - matmul( TRANSPOSE(p%TI) ,  m%Ug * p%FISISK_U + m%Udotg * p%FISISC_U - m%Uddotg * p%FISISM_U ))
+           !No C-B
+          !ENDIF   
+      endif         
       Y1_Guy_R =   matmul( F_I, p%TI )
       Y1_Guy_L = - matmul(p%D1_142, m%F_L)  ! non rotated loads
       if (.not.(p%GuyanLoadCorrection.and.p%Floating)) then
@@ -711,12 +738,12 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
          Y1_CB_L = matmul(RRb2g, Y1_CB_L) !>>> Rotate All
       endif
 
-      Y1 = Y1_CB + Y1_Utp + Y1_CB_L+ Y1_Guy_L + Y1_Guy_R 
+      Y1 = Y1_CB + Y1_Utp + Y1_CB_L+ Y1_Guy_L + Y1_Guy_R + Y1_Seismic
       ! KEEP ME
       !if ( p%nDOFM > 0) then
       !   Y1 = -(   matmul(p%C1_11, x%qm)   + matmul(p%C1_12,x%qmdot)                                    &
       !           + matmul(p%KBB,   m%u_TP) + matmul(p%CBB, m%udot_TP) + matmul(p%MBB - p%MBmmB, m%udotdot_TP) &
-      !           + matmul(p%D1_141, m%F_L) + matmul(p%D1_142, m%F_L)  - matmul( F_I, p%TI ) )                                                                          
+      !           + matmul(p%D1_141, m%F_L) + matmul(p%D1_142, m%F_L)  - matmul( F_I, p%TI ) )   + Y1_Seismic                                                                       
       !else ! No retained modes, so there are no states
       !   Y1 = -(   matmul(p%KBB,   m%u_TP) + matmul(p%CBB, m%udot_TP) + matmul(p%MBB - p%MBmmB, m%udotdot_TP) &
       !           + matmul(p%D1_141, m%F_L) + matmul(p%D1_142, m%F_L)  - matmul( F_I, p%TI ) ) 
@@ -811,6 +838,7 @@ SUBROUTINE SD_CalcContStateDeriv( t, u, p, x, xd, z, OtherState, m, dxdt, ErrSta
       INTEGER(IntKi),               INTENT(  OUT)  :: ErrStat     !< Error status of the operation
       CHARACTER(*),                 INTENT(  OUT)  :: ErrMsg      !< Error message if ErrStat /= ErrID_None
       REAL(ReKi) :: udotdot_TP(6)
+      REAL(ReKi) :: udot_TP(6)      
       INTEGER(IntKi)       :: ErrStat2
       CHARACTER(ErrMsgLen) :: ErrMsg2
       ! Initialize ErrStat
@@ -825,7 +853,8 @@ SUBROUTINE SD_CalcContStateDeriv( t, u, p, x, xd, z, OtherState, m, dxdt, ErrSta
 
       ! Compute F_L, force on internal DOF
       CALL GetExtForceOnInternalDOF(u, p, x, m, m%F_L, ErrStat2, ErrMsg2, GuyanLoadCorrection=(p%GuyanLoadCorrection.and..not.p%Floating), RotateLoads=(p%GuyanLoadCorrection.and.p%Floating))
-
+      
+      udot_TP    = (/u%TPMesh%TranslationVel( :,1), u%TPMesh%RotationVel(:,1)/)
       udotdot_TP = (/u%TPMesh%TranslationAcc(:,1), u%TPMesh%RotationAcc(:,1)/)
       if (p%GuyanLoadCorrection.and.p%Floating) then
          ! >>> Rotate All - udotdot_TP to body coordinates
@@ -837,6 +866,9 @@ SUBROUTINE SD_CalcContStateDeriv( t, u, p, x, xd, z, OtherState, m, dxdt, ErrSta
       dxdt%qm= x%qmdot
       ! NOTE: matmul( TRANSPOSE(p%PhiM), m%F_L ) = matmul( m%F_L, p%PhiM ) because F_L is 1-D
       dxdt%qmdot = -p%KMMDiag*x%qm - p%CMMDiag*x%qmdot - matmul(p%MMB,udotdot_TP)  + matmul(m%F_L, p%PhiM)
+      IF (p%SeismicInp) THEN
+           dxdt%qmdot = dxdt%qmdot + m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Uddotg * p%FMSISM_U 
+      ENDIF      
 
 END SUBROUTINE SD_CalcContStateDeriv
 
@@ -854,7 +886,7 @@ CHARACTER(64), ALLOCATABLE   :: StrArray(:)  ! Array of strings, for better cont
 LOGICAL                      :: Echo  
 LOGICAL                      :: LegacyFormat
 LOGICAL                      :: bNumeric
-INTEGER(IntKi)               :: UnIn
+INTEGER(IntKi)               :: UnIn, UnInUg
 INTEGER(IntKi)               :: nColumns, nColValid, nColNumeric
 INTEGER(IntKi)               :: IOS
 INTEGER(IntKi)               :: UnEc   !Echo file ID
@@ -866,6 +898,7 @@ LOGICAL                      :: Dummy_Bool
 INTEGER(IntKi)               :: Dummy_Int
 INTEGER(IntKi)       :: ErrStat2
 CHARACTER(ErrMsgLen) :: ErrMsg2
+CHARACTER(1024)              :: UgFile        !  File that contains the seismic input data
 ! Initialize ErrStat
 ErrStat = ErrID_None
 ErrMsg  = ""
@@ -925,6 +958,7 @@ END IF
       
 CALL ReadVar ( UnIn, SDInputFile, p%IntMethod, 'IntMethod', 'Integration Method',ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
 CALL ReadVar (UnIn, SDInputFile, Dummy_Str, 'SttcSolve', 'Solve dynamics about static equilibrium point', ErrStat2, ErrMsg2, UnEc); if(Failed()) return
+CALL ReadLVar(UnIn, SDInputFile, p%SeismicInp, 'SeismicInp', 'Existence of seismic input Ug', ErrStat2, ErrMsg2, UnEc); if(Failed()) return ! Read Seismic Input
 p%SttcSolve = idSIM_None
 if (is_numeric(Dummy_Str, DummyFloat)) then
    p%SttcSolve = int(DummyFloat)
@@ -1259,6 +1293,35 @@ DO I = 1, Init%nCMass
    endif
 ENDDO   
 IF (Check( Init%nCMass < 0     , 'NCMass must be >=0')) return
+
+!------------------------ SEISMIC INPUT --------------------------
+CALL ReadCom  ( UnIn, SDInputFile,              'Seismic Input'               ,ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
+IF (p%SeismicInp) THEN
+      ! UgFile - Name of the file containing earthquake signal
+   CALL ReadVar ( UnIn, SDInputFile, UgFile, 'UgFile', 'Name of the file containing earthquake signal', ErrStat2, ErrMsg2, UnEc )
+   IF ( PathIsRelative( UgFile ) ) UgFile = TRIM(PriPath)//TRIM(UgFile)
+   CALL GetNewUnit( UnInUg )   
+   CALL OpenFInpfile(UnInUg, TRIM(UgFile), ErrStat2, ErrMsg2)
+   IF ( ErrStat2 /= ErrID_None ) THEN
+      Call Fatal('Could not open SubDyn seismic signal input file')
+      return
+   END IF
+       !-------------------------- HEADER ---------------------------------------------
+   CALL ReadCom( UnInUg, UgFile, 'SubDyn seismic signal input file header line 1', ErrStat2, ErrMsg2 ); if(Failed()) return
+   CALL ReadCom( UnInUg, UgFile, 'SubDyn seismic signal input file header line 2', ErrStat2, ErrMsg2 ); if(Failed()) return
+       !-------------------------- SEISMIC SIGNAL ----------------------
+   CALL ReadCom( UnInUg, UgFile, ' SEISMIC SIGNAL ', ErrStat2, ErrMsg2 ); if(Failed()) return
+   CALL ReadVar( UnInUg, UgFile, p%SDDeltaTUg, 'SDdeltaTUg', 'Seismic signal Time Step',ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
+   CALL ReadIVar (UnInUg, UgFile, p%NtUg, 'NtUg', 'Number of data points',ErrStat2, ErrMsg2, UnEc); if(Failed()) return
+   CALL ReadVar( UnInUg, UgFile, p%UgDir, 'UgDir', 'Shaking direction',ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
+   CALL AllocAry(p%UgData, p%NtUg, 4, 'UgData', ErrStat2, ErrMsg2); if(Failed()) return
+   CALL ReadCom( UnInUg, UgFile, 'SubDyn seismic signal input file header line 3', ErrStat2, ErrMsg2 ); if(Failed()) return
+   CALL ReadCom( UnInUg, UgFile, 'units', ErrStat2, ErrMsg2 ); if(Failed()) return
+   DO I = 1, p%NtUg
+      CALL ReadAry( UnInUg, UgFile, p%UgData(I,:), 4, 'UgData', 'time, input ground displacement, velocity and acceleration, input ground twist, angular velocity and acceleration, vertical displacement, velocity and acceleration', ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
+   ENDDO
+   CLOSE( UnInUg )
+ENDIF
 
 !---------------------------- OUTPUT: SUMMARY & OUTFILE ------------------------------
 CALL ReadCom (UnIn, SDInputFile,               'OUTPUT'                                            ,ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
@@ -1830,8 +1893,9 @@ SUBROUTINE SD_AM2( t, n, u, utimes, p, x, xd, z, OtherState, m, ErrStat, ErrMsg 
    INTEGER(IntKi),                 INTENT(  OUT)   :: ErrStat        !< Error status of the operation
    CHARACTER(*),                   INTENT(  OUT)   :: ErrMsg         !< Error message if ErrStat /= ErrID_None
    ! local variables
-   TYPE(SD_InputType)                              :: u_interp       ! interpolated value of inputs 
+   TYPE(SD_InputType)                              :: u_interp       ! interpolated value of inputs    
    REAL(ReKi)                                      :: xq(2*p%nDOFM) !temporary states (qm and qmdot only)
+   REAL(ReKi)                                      :: udot_TP2(6) ! temporary copy of udot_TP   
    REAL(ReKi)                                      :: udotdot_TP2(6) ! temporary copy of udotdot_TP
    REAL(ReKi)                                      :: F_L2(p%nDOF__L)   ! temporary copy of F_L
    INTEGER(IntKi)                                  :: ErrStat2
@@ -1847,6 +1911,7 @@ SUBROUTINE SD_AM2( t, n, u, utimes, p, x, xd, z, OtherState, m, ErrStat, ErrMsg 
    ! interpolate u to find u_interp = u(t) = u_n     
    CALL SD_Input_ExtrapInterp( u, utimes, u_interp, t, ErrStat2, ErrMsg2 ); CALL SetErrStat(ErrStat2,ErrMsg2,ErrStat,ErrMsg,'SD_AM2')
    CALL GetExtForceOnInternalDOF(u_interp, p, x, m, m%F_L, ErrStat2, ErrMsg2, GuyanLoadCorrection=(p%GuyanLoadCorrection.and..not.p%Floating), RotateLoads=(p%GuyanLoadCorrection.and.p%Floating))
+   m%udot_TP    = (/u_interp%TPMesh%TranslationVel(:,1), u_interp%TPMesh%RotationVel(:,1)/) !New   
    m%udotdot_TP = (/u_interp%TPMesh%TranslationAcc(:,1), u_interp%TPMesh%RotationAcc(:,1)/)
    if (p%GuyanLoadCorrection.and.p%Floating) then
       ! >>> Rotate All - udotdot_TP to body coordinates
@@ -1857,6 +1922,7 @@ SUBROUTINE SD_AM2( t, n, u, utimes, p, x, xd, z, OtherState, m, ErrStat, ErrMsg 
    ! extrapolate u to find u_interp = u(t + dt)=u_n+1
    CALL SD_Input_ExtrapInterp(u, utimes, u_interp, t+p%SDDeltaT, ErrStat2, ErrMsg2); CALL SetErrStat(ErrStat2,ErrMsg2,ErrStat,ErrMsg,'SD_AM2')
    CALL GetExtForceOnInternalDOF(u_interp, p, x, m, F_L2, ErrStat2, ErrMsg2, GuyanLoadCorrection=(p%GuyanLoadCorrection.and..not.p%Floating), RotateLoads=(p%GuyanLoadCorrection.and.p%Floating))
+   udot_TP2    = (/u_interp%TPMesh%TranslationVel(:,1), u_interp%TPMesh%RotationVel(:,1)/) !New   
    udotdot_TP2 = (/u_interp%TPMesh%TranslationAcc(:,1), u_interp%TPMesh%RotationAcc(:,1)/)
    if (p%GuyanLoadCorrection.and.p%Floating) then
       ! >>> Rotate All - udotdot_TP to body coordinates
@@ -1865,6 +1931,7 @@ SUBROUTINE SD_AM2( t, n, u, utimes, p, x, xd, z, OtherState, m, ErrStat, ErrMsg 
    endif
    
    ! calculate (u_n + u_n+1)/2
+   udot_TP2    = 0.5_ReKi * ( udot_TP2    + m%udot_TP ) !New   
    udotdot_TP2 = 0.5_ReKi * ( udotdot_TP2 + m%udotdot_TP )
    F_L2        = 0.5_ReKi * ( F_L2        + m%F_L        )
           
@@ -1872,6 +1939,10 @@ SUBROUTINE SD_AM2( t, n, u, utimes, p, x, xd, z, OtherState, m, ErrStat, ErrMsg 
    xq(        1:  p%nDOFM)=p%SDDeltaT * x%qmdot                                                                                     !upper portion of array
    xq(1+p%nDOFM:2*p%nDOFM)=p%SDDeltaT * (-p%KMMDiag*x%qm - p%CMMDiag*x%qmdot - matmul(p%MMB, udotdot_TP2)  + matmul(F_L2,p%PhiM ))  !lower portion of array
    ! note: matmul(F_L2,p%PhiM  ) = matmul(p%PhiM_T,F_L2) because F_L2 is 1-D
+   
+   IF (p%SeismicInp) THEN
+     xq(1+p%nDOFM:2*p%nDOFM)=xq(1+p%nDOFM:2*p%nDOFM)  + m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Uddotg * p%FMSISM_U
+   ENDIF   
              
    !....................................................
    ! Solve for xq: (equivalent to xq= matmul(p%AM2InvJac,xq)
@@ -2315,7 +2386,7 @@ SUBROUTINE SD_Craig_Bampton(Init, p, CB, ErrStat, ErrMsg)
    REAL(FEKi), ALLOCATABLE  :: PhiRb(:, :)  ! Purely to avoid loosing these modes for output ! TODO, kept for backward compatibility of Summary file
    REAL(ReKi)               :: JDamping1 ! temporary storage for first element of JDamping array 
    INTEGER(IntKi)           :: nR     !< Dimension of R DOFs (to switch between __R and R__)
-   INTEGER(IntKi)           :: nL, nM, nM_out
+   INTEGER(IntKi)           :: nL, nM, nM_out !,nI
    INTEGER(IntKi), pointer  :: IDR(:) !< Alias to switch between IDR__ and ID__Rb
    INTEGER(IntKi)           :: ErrStat2
    CHARACTER(ErrMsgLen)     :: ErrMsg2
@@ -2358,6 +2429,7 @@ SUBROUTINE SD_Craig_Bampton(Init, p, CB, ErrStat, ErrMsg)
    ENDIF  
    nL = p%nDOF__L
    nM = p%nDOFM
+   !nI = p%nDOFI__   
 
    CALL WrScr('   Performing Craig-Bampton reduction '//trim(Num2LStr(p%nDOF_red))//' DOFs -> '//trim(Num2LStr(p%nDOFM))//' modes + '//trim(Num2LStr(p%nDOF__Rb))//' DOFs')
    CALL AllocAry( CB%MBB,    nR, nR,    'CB%MBB',    ErrStat2, ErrMsg2 ); CALL SetErrStat(ErrStat2, ErrMsg2, ErrStat, ErrMsg, RoutineName)
@@ -2367,7 +2439,7 @@ SUBROUTINE SD_Craig_Bampton(Init, p, CB, ErrStat, ErrMsg)
    CALL AllocAry( CB%PhiR,   nL, nR,    'CB%PhiR',   ErrStat2, ErrMsg2 ); CALL SetErrStat(ErrStat2, ErrMsg2, ErrStat, ErrMsg, RoutineName)
    CALL AllocAry( CB%OmegaL, nM_out,    'CB%OmegaL', ErrStat2, ErrMsg2 ); if(Failed()) return
 
-   CALL CraigBamptonReduction(Init%M, Init%K, IDR, nR, p%ID__L, nL, nM, nM_out, CB%MBB, CB%MBM, CB%KBB, CB%PhiL, CB%PhiR, CB%OmegaL, ErrStat2, ErrMsg2) 
+   CALL CraigBamptonReduction(Init, p, Init%M, Init%K, IDR, nR, p%ID__L, nL, nM, nM_out, CB%MBB, CB%MBM, CB%KBB, CB%PhiL, CB%PhiR, CB%OmegaL, ErrStat2, ErrMsg2) 
    if(Failed()) return
 
    CALL AllocAry(PhiRb,  nL, nR, 'PhiRb',   ErrStat2, ErrMsg2 ); CALL SetErrStat(ErrStat2, ErrMsg2, ErrStat, ErrMsg, RoutineName)
@@ -2443,7 +2515,7 @@ END SUBROUTINE SD_Craig_Bampton
 !! NOTE: performs a Guyan reduction
 SUBROUTINE SD_Guyan_RigidBodyMass(Init, p, MBB, ErrStat, ErrMsg)
    type(SD_InitType),       intent(inout) :: Init       ! NOTE: Mass and Stiffness are modified but then set back to original
-   type(SD_ParameterType),  intent(in   ) :: p           ! Parameters
+   type(SD_ParameterType),  intent(inout   ) :: p           ! Parameters
    real(FEKi), allocatable, intent(out)   :: MBB(:,:)     !< MBB
    integer(IntKi),          intent(  out) :: ErrStat !< Error status of the operation
    character(*),            intent(  out) :: ErrMsg  !< error message if errstat /= errid_none   
@@ -2473,7 +2545,7 @@ SUBROUTINE SD_Guyan_RigidBodyMass(Init, p, MBB, ErrStat, ErrMsg)
    CALL AllocAry( PhiR,   nL, nR, 'PhiR',   ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, RoutineName)
    CALL AllocAry( OmegaL, nL,     'OmegaL', ErrStat2, ErrMsg2 ); if(Failed()) return
 
-   CALL CraigBamptonReduction(Init%M, Init%K, p%IDR__, nR, p%ID__L, nL, nM, nM_Out, MBB, MBM, KBB, PhiL, PhiR, OmegaL, ErrStat2, ErrMsg2)
+   CALL CraigBamptonReduction(Init, p, Init%M, Init%K, p%IDR__, nR, p%ID__L, nL, nM, nM_Out, MBB, MBM, KBB, PhiL, PhiR, OmegaL, ErrStat2, ErrMsg2)
    if(Failed()) return
 
    if(allocated(KBB)   ) deallocate(KBB)
@@ -2690,7 +2762,13 @@ SUBROUTINE AllocParameters(p, nDOFM, ErrStat, ErrMsg)
    CALL AllocAry( p%TI,            p%nDOFI__,  6,      'p%TI',            ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
    CALL AllocAry( p%D1_141,        nDOFL_TP, p%nDOF__L,'p%D1_141',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
    CALL AllocAry( p%D1_142,        nDOFL_TP, p%nDOF__L,'p%D1_142',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
-   CALL AllocAry( p%PhiRb_TI,      p%nDOF__L, nDOFL_TP,'p%PhiRb_TI',      ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
+   CALL AllocAry( p%PhiRb_TI,      p%nDOF__L, nDOFL_TP,'p%PhiRb_TI',      ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')   
+   CALL AllocAry( p%PhiRbase, p%nDOF__L , p%nDOFR__ - p%nDOFI__, 'p%PhiRbase', ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters') 
+   CALL AllocAry( p%RRbase,     p%nDOFR__ - p%nDOFI__, 'Influence vector RRbase', ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
+   ! Seismic Parameters
+   CALL AllocAry( p%FISISK_U,        nDOFL_TP,         'p%FISISK_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')     
+   CALL AllocAry( p%FISISC_U,        nDOFL_TP,         'p%FISISC_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')  
+   CALL AllocAry( p%FISISM_U,        nDOFL_TP,         'p%FISISM_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
 
    
 if (p%nDOFM > 0 ) THEN  
@@ -2698,6 +2776,10 @@ if (p%nDOFM > 0 ) THEN
    CALL AllocAry( p%MMB,           nDOFM,    nDOFL_TP, 'p%MMB',           ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
    CALL AllocAry( p%KMMDiag,       nDOFM,              'p%KMMDiag',       ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
    CALL AllocAry( p%CMMDiag,       nDOFM,              'p%CMMDiag',       ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
+   ! Seismic Parameters
+   CALL AllocAry( p%FMSISK_U,        nDOFM,         'p%FMSISK_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')       
+   CALL AllocAry( p%FMSISC_U,        nDOFM,         'p%FMSISC_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
+   CALL AllocAry( p%FMSISM_U,        nDOFM,         'p%FMSISM_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')    
    CALL AllocAry( p%C1_11,         nDOFL_TP, nDOFM,    'p%C1_11',         ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
    CALL AllocAry( p%C1_12,         nDOFL_TP, nDOFM,    'p%C1_12',         ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
    CALL AllocAry( p%PhiM,          p%nDOF__L,  nDOFM,    'p%PhiM',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
@@ -3471,7 +3553,7 @@ END SUBROUTINE WriteJSONCommon
 SUBROUTINE OutSummary(Init, p, m, InitInput, CBparams, Modes, Omega, Omega_Gy, ErrStat,ErrMsg)
    use Yaml
    TYPE(SD_InitType),          INTENT(INOUT)  :: Init           ! Input data for initialization routine
-   TYPE(SD_ParameterType),     INTENT(IN)     :: p              ! Parameters
+   TYPE(SD_ParameterType),     INTENT(INOUT)  :: p              ! Parameters
    TYPE(SD_MiscVarType)  ,     INTENT(IN)     :: m              ! Misc
    TYPE(SD_InitInputType),     INTENT(IN)     :: InitInput   !< Input data for initialization routine         
    TYPE(CB_MatArrays),         INTENT(IN)     :: CBparams       ! CB parameters that will be passed in for summary file use
@@ -4175,6 +4257,43 @@ SUBROUTINE ReadSSIfile ( Filename, JointID, SSIK, SSIM, ErrStat, ErrMsg, UnEc )
    END IF
    RETURN
 END SUBROUTINE ReadSSIfile
+
+!-----------------------------------------------------------------------------------------------------
+!> Saves in Ug and Ugdot the interpolated values of the input signal at current time t
+!> Linear interporlation
+SUBROUTINE InterpSeismicSignal(t, p, m)
+
+      REAL(DbKi),                     INTENT(IN   )  :: t           !< Current simulation time in seconds
+      TYPE(SD_ParameterType),         INTENT(IN   )  :: p           !< Parameters
+      TYPE(SD_MiscVarType),           INTENT(INOUT)  :: m           !< Misc/optimization variables
+
+      ! local variables
+
+      REAL(ReKi)                                     :: frac
+      INTEGER(IntKi)                                 :: I,Ifloor, Iceiling
+
+      IFloor = FLOOR(t/p%SDDeltaTUg) + 1
+      ICeiling = CEILING(t/p%SDDeltaTUg) + 1
+
+      IF (IFloor == ICeiling) THEN
+
+         m%Ug = p%UgData(Ifloor,2)
+         m%Udotg = p%UgData(Ifloor,3)
+         m%Uddotg = p%UgData(Ifloor,4)
+
+      ELSE
+
+         I=Ifloor
+
+         frac = ( t - p%UgData(I,1) ) / ( p%UgData(I+1,1) - p%UgData(I,1) )
+
+         m%Ug     = p%UgData(I,2) + frac * ( p%UgData(I+1,2) - p%UgData(I,2) )
+         m%Udotg  = p%UgData(I,3) + frac * ( p%UgData(I+1,3) - p%UgData(I,3) )
+         m%Uddotg = p%UgData(I,4) + frac * ( p%UgData(I+1,4) - p%UgData(I,4) )
+
+      ENDIF
+
+END SUBROUTINE InterpSeismicSignal
 
 
 end module SubDyn
