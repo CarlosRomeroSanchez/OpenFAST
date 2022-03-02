@@ -561,9 +561,14 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
    REAL(ReKi) , allocatable               :: RI(:)             ! RI(p%DOFI) , influece vector on I dofs
    REAL(ReKi) , allocatable               :: RL(:)             ! RR(p%DOFL) , influece vector on L dofs
    REAL(ReKi) , allocatable               :: RB(:)             ! RR(p%DOFR-p%DOFI) , influece vector on b dofs
+   ! Calculate RM
+   REAL(ReKi) , allocatable               :: RM(:)             ! RM(nM) , influece vector on Craig-Bampton modes
+   REAL(ReKi) , allocatable               :: PhiL_FULL(:,:)             ! Full PhiL
+   REAL(ReKi) , allocatable               :: OmegaL_FULL(:)             ! Full OmegaL
+   REAL(ReKi) , allocatable               :: InvPhiL(:, :)
+   REAL(ReKi) , allocatable               :: PhiL_M(:)             ! Vector
    REAL(ReKi) , allocatable               :: OmegaDamp2(:, :)
-   REAL(ReKi) , allocatable               :: NOmegaM2(:)
-   REAL(ReKi) , allocatable               :: InvPhiM(:, :)   
+   REAL(ReKi) , allocatable               :: NOmegaM2(:,:) 
    INTEGER                  :: I, J        !counter
    INTEGER                  :: ipiv(nL) ! length min(m,n) (See LAPACK documentation)
    INTEGER(IntKi)           :: ErrStat2
@@ -585,6 +590,10 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
    if ( nM_out > 0 ) then 
       ! bCheckSingularity = True
       CALL EigenSolveWrap(KLL, MLL, nL, nM_out, .True., PhiL(:,1:nM_out), OmegaL(1:nM_out),  ErrStat2, ErrMsg2); if(Failed()) return
+     ! Compute PhiL_FULL
+      CALL AllocAry( PhiL_FULL , nL, nL     , 'PhiL_FULL' , ErrStat2 , ErrMsg2); if(Failed()) return
+      CALL AllocAry( OmegaL_FULL , nL, 'OmegaL_FULL' , ErrStat2 , ErrMsg2); if(Failed()) return
+      CALL EigenSolveWrap(KLL, MLL, nL, nL, .True., PhiL_FULL(:,1:nL), OmegaL_FULL(1:nL),  ErrStat2, ErrMsg2); if(Failed()) return
       ! --- Normalize PhiL
       ! MU = MATMUL ( MATMUL( TRANSPOSE(PhiL), MLL ), PhiL )
       CALL AllocAry( Temp , nM_out, nL     , 'Temp' , ErrStat2 , ErrMsg2); if(Failed()) return
@@ -690,17 +699,19 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
       ! Set Influece vectors RR and RL
 
     CALL AllocAry( RL,  nL, 'Influence vector RL', ErrStat2, ErrMsg2); if(Failed()) return
+    CALL AllocAry( PhiL_M,  nL, 'Influence vector PhiL_M', ErrStat2, ErrMsg2); if(Failed()) return
     CALL AllocAry( RR,  p%nDOFR__, 'Influence vector RR', ErrStat2, ErrMsg2); if(Failed()) return 
     CALL AllocAry( RI,  p%nDOFI__, 'Influence vector RI', ErrStat2, ErrMsg2); if(Failed()) return !Dofi
     CALL AllocAry( RB,  p%nDOFR__ - p%nDOFI__, 'Influence vector RB', ErrStat2, ErrMsg2); if(Failed()) return
-  !  CALL AllocAry( p%RRbase, p%nDOFR__ - p%nDOFI__, 'Influence vector RRbase', ErrStat2, ErrMsg2); if(Failed()) return
+    CALL AllocAry( RM,  nM, 'Influence vector RM', ErrStat2, ErrMsg2); if(Failed()) return
     
 
    RR = 0.0_ReKi
    RI = 0.0_ReKi
    RL = 0.0_ReKi
    RB = 0.0_ReKi
-   
+   RM = 0.0_ReKi
+   PhiL_M = 0.0_ReKi
    J = 0
 
    DO I = 1,p%nDOFR__
@@ -749,20 +760,22 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
           ! Seismic Parameters
           ! -------------------     
           
-      CALL AllocAry(InvPhiM, nM , nM , 'InvPhiM'      , ErrStat2, ErrMsg2); if(Failed()) return
-      InvPhiM = 0.0_ReKi  ! Cuidado
+      CALL AllocAry(InvPhiL, nL , nL , 'InvPhiL'      , ErrStat2, ErrMsg2); if(Failed()) return
+      InvPhiL = 0.0_ReKi  ! Cuidado
       
-      IF ( nM > 0) THEN ! Tener en cuenta invphiM=0 cuando Nmodes=0 --> IF ( p%Nmodes > 0) THEN
-      InvPhiM = 0.0_ReKi! Inv(PhiL(:,1:nM),nM) 
+      IF ( nM > 0) THEN !  invphiM=0 cuando Nmodes=0 --> IF ( p%Nmodes > 0) THEN
+      InvPhiL = Inv(PhiL_FULL(:,:),nL) 
+      PhiL_M = matmul(InvPhiL, RL - matmul(PhiR,RR) )
+      RM = PhiL_M(1:nM)
       
-      ! Problema 1, quito invPhiM
+      ! Problem 1, invPhiM
       p%FISISC_U = 0.0_ReKi
-     ! (MATMUL(CBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI)) !+ MATMUL(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : ) ,matmul(InvPhiM, RL - matmul(PhiR,RR) ) ))
+     ! (MATMUL(CBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI)) + MATMUL(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : ) ,matmul(InvPhiM, RL - matmul(PhiR,RR) ) ))
       
       Else 
       
       p%FISISC_U = 0.0_ReKi
-      !(MATMUL(CBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI)) !+ MATMUL(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : ) ,RL ))
+      !(MATMUL(CBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI)) + MATMUL(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : ) ,RL ))
       
       END IF
       
@@ -782,39 +795,45 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
        ELSE
 
       CALL AllocAry( OmegaDamp2 , nM , nM , 'OmegaDamp2' , ErrStat2, ErrMsg2); if(Failed()) return
-      CALL AllocAry( NOmegaM2 , nM , 'NomegaM2' , ErrStat2, ErrMsg2); if(Failed()) return
+      CALL AllocAry( NOmegaM2 , nM , nM, 'NomegaM2' , ErrStat2, ErrMsg2); if(Failed()) return
 
       OmegaDamp2 = 0.0_ReKi
       NOmegaM2 = 0.0_ReKi 
 
       DO I = 1, nM
         OmegaDamp2(I,I) = 2.0_ReKi * OmegaL(I) * Init%JDampings(I) 
-        NOmegaM2(I)  = -1.0_ReKi * OmegaL(I) * OmegaL(I)
+        NOmegaM2(I,I)  = -1.0_ReKi * OmegaL(I) * OmegaL(I)
+        
       ENDDO
-      ! Problema 2
-      p%FMSISK_U = 0.0_ReKi
-      !NOmegaM2(I-1) * matmul(InvPhiM, RL - matmul(PhiR,RR) ) !KMB ES 0, SOLO APARECE KLL=OMEGA2  
+      ! Problem 2
+      p%FMSISK_U = MATMUL(NOmegaM2, RM)
+      ! NOmegaM2(I-1) * RM
+      !MATMUL(-p%KMMDiag,RM)
+      !NOmegaM2(I-1) * matmul(InvPhiM, RL - matmul(PhiR,RR) ) !KMB=0, KLL=OMEGA2  
 
 
-      p%FMSISC_U = 0.0_ReKi
+      p%FMSISC_U = MATMUL(OmegaDamp2,RM)
+     ! MATMUL(p%CMMDiag,RM)
       !MATMUL(TRANSPOSE(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : )),RI) !+ MATMUL(CMM(:, :)+ OmegaDamp2(I-1,I-1) , MATMUL(InvPhiM, RL - MATMUL(PhiR,RR) )  )
 
 
-      p%FMSISM_U = MATMUL(TRANSPOSE(MBM(1:p%nDOFR__-p%nDOFI__,:)),RB) ! Mmb --> SAle de MMB, Mmb * RB
+      p%FMSISM_U = MATMUL(TRANSPOSE(MBM(1:p%nDOFR__-p%nDOFI__,:)),RB) ! Mmb --> MMB, Mmb * RB
       
       DEALLOCATE(OmegaDamp2)
       DEALLOCATE(NOmegaM2)
-      DEALLOCATE(InvPhiM)
+      DEALLOCATE(InvPhiL)
+      DEALLOCATE(PhiL_M)
+      
       
       ENDIF
       
       
-      
-   
    IF (ALLOCATED(RR)) DEALLOCATE(RR)
    IF (ALLOCATED(RL)) DEALLOCATE(RL)
    IF (ALLOCATED(RB)) DEALLOCATE(RB)
-   IF (ALLOCATED(RI)) DEALLOCATE(RI)   
+   IF (ALLOCATED(RI)) DEALLOCATE(RI)  
+   IF (ALLOCATED(RM)) DEALLOCATE(RM) 
+   
    
    ENDIF  ! End IF (p%SeismicInp)   
         
