@@ -546,10 +546,10 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
                          + matmul( p%D2_63, udotdot_TP ) + matmul( p%D2_64,    m%F_L   )
                          
           IF (p%SeismicInp) THEN
-            m%UL         =  m%UL        + matmul ( p%PhiRbase , p%RRbase ) * m%Ug 
-            m%UL_dot     =  m%UL_dot    + matmul ( p%PhiRbase , p%RRbase ) * m%Udotg 
-            m%UL_dotdot  =  m%UL_dotdot + matmul (p%PhiM, m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Udotg * p%FMSISM_U) &
-                                        + matmul ( p%PhiRbase , p%RRbase ) * m%Uddotg
+            m%UL         =  m%UL       ! + matmul ( p%PhiRbase , p%RRbase ) * m%Ug 
+            m%UL_dot     =  m%UL_dot   ! + matmul ( p%PhiRbase , p%RRbase ) * m%Udotg 
+            m%UL_dotdot  =  m%UL_dotdot !+ matmul (p%PhiM, - MATMUL(p%FMSISK_U,m%Ug) - MATMUL(p%FMSISC_U,m%Udotg) - MATMUL( p%FMSISM_U,m%Uddotg)) &
+                                        !+  matmul( p%PhiRbase , p%RRbase ) * m%Uddotg
             !+ matmul ( p%PhiM ,  m%Ug * p%FMIMKP + m%Udotg * p%FMIMCP - m%Udotg * p%FMIMMP + m%PHIg * p%FMIMKP_PHI + m%PHIdotg * p%FMIMCP_PHI - m%PHIdotg * p%FMIMMP_PHI + m%Vg * p%FMIMKP_V + m%Vdotg * p%FMIMCP_V - m%Vdotg * p%FMIMMP_V ) &
                                         !+ matmul ( p%PhiRbase , p%RRbase ) * m%Uddotg  
          ENDIF                         
@@ -713,8 +713,8 @@ SUBROUTINE SD_CalcOutput( t, u, p, x, xd, z, OtherState, y, m, ErrStat, ErrMsg )
       if ( p%nDOFM > 0) then
          Y1_CB = -( matmul(p%C1_11, x%qm) + matmul(p%C1_12, x%qmdot) )
          IF (p%SeismicInp) THEN
-           Y1_Seismic = - ( matmul(p%MBM ,  m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Uddotg * p%FMSISM_U)      &
-                     - (matmul( TRANSPOSE(p%TI),m%Ug * p%FISISK_U + m%Udotg * p%FISISC_U - m%Uddotg * p%FISISM_U )))     
+           Y1_Seismic = - ( matmul(p%MBM ,  - MATMUL(p%FMSISK_U,m%Ug) - MATMUL(p%FMSISC_U,m%Udotg) - MATMUL( p%FMSISM_U,m%Uddotg))      &
+                     - (matmul( TRANSPOSE(p%TI),-MATMUL(p%FISISK_U,m%Ug) - MATMUL(p%FISISC_U,m%Udotg) - MATMUL(p%FISISM_U,m%Uddotg) )))     
            !Y1 - ( matmul(p%MBM ,  m%Ug * p%FMIMKP + m%Udotg * p%FMIMCP - m%Uddotg * p%FMIMMP + m%PHIg * p%FMIMKP_PHI + m%PHIdotg * p%FMIMCP_PHI - m%PHIddotg * p%FMIMMP_PHI  + m%Vg * p%FMIMKP_V + m%Vdotg * p%FMIMCP_V - m%Vddotg * p%FMIMMP_V)      &
                   !   - (matmul( TRANSPOSE(p%TI),m%Ug * p%FRIMKP + m%Udotg * p%FRIMCP - m%Uddotg * p%FRIMMP + m%PHIg * p%FRIMKP_PHI + m%PHIdotg * p%FRIMCP_PHI - m%PHIddotg * p%FRIMMP_PHI + m%Vg * p%FRIMKP_V + m%Vdotg * p%FRIMCP_V - m%Vddotg * p%FRIMMP_V )))
           ENDIF          
@@ -867,7 +867,7 @@ SUBROUTINE SD_CalcContStateDeriv( t, u, p, x, xd, z, OtherState, m, dxdt, ErrSta
       ! NOTE: matmul( TRANSPOSE(p%PhiM), m%F_L ) = matmul( m%F_L, p%PhiM ) because F_L is 1-D
       dxdt%qmdot = -p%KMMDiag*x%qm - p%CMMDiag*x%qmdot - matmul(p%MMB,udotdot_TP)  + matmul(m%F_L, p%PhiM)
       IF (p%SeismicInp) THEN
-           dxdt%qmdot = dxdt%qmdot + m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Uddotg * p%FMSISM_U 
+           dxdt%qmdot = dxdt%qmdot - MATMUL(p%FMSISK_U,m%Ug) - MATMUL(p%FMSISC_U,m%Udotg) - MATMUL(p%FMSISM_U,m%Uddotg) 
       ENDIF      
 
 END SUBROUTINE SD_CalcContStateDeriv
@@ -1314,11 +1314,11 @@ IF (p%SeismicInp) THEN
    CALL ReadVar( UnInUg, UgFile, p%SDDeltaTUg, 'SDdeltaTUg', 'Seismic signal Time Step',ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
    CALL ReadIVar (UnInUg, UgFile, p%NtUg, 'NtUg', 'Number of data points',ErrStat2, ErrMsg2, UnEc); if(Failed()) return
    CALL ReadVar( UnInUg, UgFile, p%UgDir, 'UgDir', 'Shaking direction',ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
-   CALL AllocAry(p%UgData, p%NtUg, 4, 'UgData', ErrStat2, ErrMsg2); if(Failed()) return
+   CALL AllocAry(p%UgData, p%NtUg, 19, 'UgData', ErrStat2, ErrMsg2); if(Failed()) return
    CALL ReadCom( UnInUg, UgFile, 'SubDyn seismic signal input file header line 3', ErrStat2, ErrMsg2 ); if(Failed()) return
    CALL ReadCom( UnInUg, UgFile, 'units', ErrStat2, ErrMsg2 ); if(Failed()) return
    DO I = 1, p%NtUg
-      CALL ReadAry( UnInUg, UgFile, p%UgData(I,:), 4, 'UgData', 'time, input ground displacement, velocity and acceleration, input ground twist, angular velocity and acceleration, vertical displacement, velocity and acceleration', ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
+      CALL ReadAry( UnInUg, UgFile, p%UgData(I,:), 19, 'UgData', 'time, input ground displacement, velocity and acceleration, input ground twist, angular velocity and acceleration, vertical displacement, velocity and acceleration', ErrStat2, ErrMsg2, UnEc ); if(Failed()) return
    ENDDO
    CLOSE( UnInUg )
 ENDIF
@@ -1941,7 +1941,7 @@ SUBROUTINE SD_AM2( t, n, u, utimes, p, x, xd, z, OtherState, m, ErrStat, ErrMsg 
    ! note: matmul(F_L2,p%PhiM  ) = matmul(p%PhiM_T,F_L2) because F_L2 is 1-D
    
    IF (p%SeismicInp) THEN
-     xq(1+p%nDOFM:2*p%nDOFM)=xq(1+p%nDOFM:2*p%nDOFM)  + m%Ug * p%FMSISK_U + m%Udotg * p%FMSISC_U - m%Uddotg * p%FMSISM_U
+     xq(1+p%nDOFM:2*p%nDOFM)=xq(1+p%nDOFM:2*p%nDOFM)  - MATMUL(p%FMSISK_U,m%Ug) - MATMUL(p%FMSISC_U,m%Udotg) - MATMUL( p%FMSISM_U,m%Uddotg)
    ENDIF   
              
    !....................................................
@@ -2766,9 +2766,9 @@ SUBROUTINE AllocParameters(p, nDOFM, ErrStat, ErrMsg)
    CALL AllocAry( p%PhiRbase, p%nDOF__L , p%nDOFR__ - p%nDOFI__, 'p%PhiRbase', ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters') 
    CALL AllocAry( p%RRbase,     p%nDOFR__ - p%nDOFI__, 'Influence vector RRbase', ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
    ! Seismic Parameters
-   CALL AllocAry( p%FISISK_U,        nDOFL_TP,         'p%FISISK_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')     
-   CALL AllocAry( p%FISISC_U,        nDOFL_TP,         'p%FISISC_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')  
-   CALL AllocAry( p%FISISM_U,        nDOFL_TP,         'p%FISISM_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
+   CALL AllocAry( p%FISISK_U,        nDOFL_TP, p%nDOFC__,         'p%FISISK_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')     
+   CALL AllocAry( p%FISISC_U,        nDOFL_TP, p%nDOFC__,        'p%FISISC_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')  
+   CALL AllocAry( p%FISISM_U,        nDOFL_TP, p%nDOFC__,        'p%FISISM_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
 
    
 if (p%nDOFM > 0 ) THEN  
@@ -2777,9 +2777,9 @@ if (p%nDOFM > 0 ) THEN
    CALL AllocAry( p%KMMDiag,       nDOFM,              'p%KMMDiag',       ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
    CALL AllocAry( p%CMMDiag,       nDOFM,              'p%CMMDiag',       ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
    ! Seismic Parameters
-   CALL AllocAry( p%FMSISK_U,        nDOFM,         'p%FMSISK_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')       
-   CALL AllocAry( p%FMSISC_U,        nDOFM,         'p%FMSISC_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
-   CALL AllocAry( p%FMSISM_U,        nDOFM,         'p%FMSISM_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters') 
+   CALL AllocAry( p%FMSISK_U,        nDOFM, p%nDOFC__,         'p%FMSISK_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')       
+   CALL AllocAry( p%FMSISC_U,        nDOFM, p%nDOFC__,        'p%FMSISC_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')
+   CALL AllocAry( p%FMSISM_U,        nDOFM, p%nDOFC__,        'p%FMSISM_U',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters') 
    CALL AllocAry( p%C1_11,         nDOFL_TP, nDOFM,    'p%C1_11',         ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
    CALL AllocAry( p%C1_12,         nDOFL_TP, nDOFM,    'p%C1_12',         ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
    CALL AllocAry( p%PhiM,          p%nDOF__L,  nDOFM,    'p%PhiM',        ErrStat2, ErrMsg2 ); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocParameters')        
@@ -2821,7 +2821,11 @@ SUBROUTINE AllocMiscVars(p, Misc, ErrStat, ErrMsg)
    CALL AllocAry( Misc%U_full_dotdot,p%nDOF,      'U_full_dotdot', ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')      
    CALL AllocAry( Misc%U_red,        p%nDOF_red,  'U_red',         ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')      
    CALL AllocAry( Misc%U_red_dot,    p%nDOF_red,  'U_red_dot',     ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')      
-   CALL AllocAry( Misc%U_red_dotdot, p%nDOF_red,  'U_red_dotdot',  ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')      
+   CALL AllocAry( Misc%U_red_dotdot, p%nDOF_red,  'U_red_dotdot',  ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')  
+   ! Seismic input Vector
+   CALL AllocAry( Misc%Ug,        p%nDOFC__,  'Ug',         ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')      
+   CALL AllocAry( Misc%Udotg,     p%nDOFC__,  'Udotg',     ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')      
+   CALL AllocAry( Misc%Uddotg,    p%nDOFC__,  'Uddotg',  ErrStat2, ErrMsg2); CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')     
 
    CALL AllocAry( Misc%Fext,      p%nDOF     , 'm%Fext    ', ErrStat2, ErrMsg2 );CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')
    CALL AllocAry( Misc%Fext_red,  p%nDOF_red , 'm%Fext_red', ErrStat2, ErrMsg2 );CALL SetErrStat( ErrStat2, ErrMsg2, ErrStat, ErrMsg, 'AllocMiscVars')
@@ -4270,26 +4274,40 @@ SUBROUTINE InterpSeismicSignal(t, p, m)
       ! local variables
 
       REAL(ReKi)                                     :: frac
-      INTEGER(IntKi)                                 :: I,Ifloor, Iceiling
+      INTEGER(IntKi)                                 :: I,Ifloor, Iceiling, j, k, cont
 
       IFloor = FLOOR(t/p%SDDeltaTUg) + 1
       ICeiling = CEILING(t/p%SDDeltaTUg) + 1
-
+      
+      m%Ug = 0.0_ReKi
+      m%Udotg = 0.0_ReKi
+      m%Uddotg = 0.0_ReKi
+      
       IF (IFloor == ICeiling) THEN
 
-         m%Ug = p%UgData(Ifloor,2)
-         m%Udotg = p%UgData(Ifloor,3)
-         m%Uddotg = p%UgData(Ifloor,4)
+        DO j=1,p%nNodes_C 
+        DO k = 1,6
+           cont=k+(j-1)*6
+        m%Ug(cont) = p%UgData(Ifloor,k+1)
+        m%Udotg(cont) = p%UgData(Ifloor,k+7)
+        m%Uddotg(cont) = p%UgData(Ifloor,k+13)
+        ENDDO
+        ENDDO
 
       ELSE
 
          I=Ifloor
 
          frac = ( t - p%UgData(I,1) ) / ( p%UgData(I+1,1) - p%UgData(I,1) )
-
-         m%Ug     = p%UgData(I,2) + frac * ( p%UgData(I+1,2) - p%UgData(I,2) )
-         m%Udotg  = p%UgData(I,3) + frac * ( p%UgData(I+1,3) - p%UgData(I,3) )
-         m%Uddotg = p%UgData(I,4) + frac * ( p%UgData(I+1,4) - p%UgData(I,4) )
+         
+         DO j=1,p%nNodes_C 
+         Do k = 1,6
+            cont=k+(j-1)*6
+         m%Ug(cont)   = p%UgData(I,k+1) + frac * ( p%UgData(I+1,k+1) - p%UgData(I,k+1) )
+         m%Udotg(cont)  = p%UgData(I,k+7) + frac * ( p%UgData(I+1,k+7) - p%UgData(I,k+7) )
+         m%Uddotg(cont)  = p%UgData(I,k+13) + frac * ( p%UgData(I+1,k+13) - p%UgData(I,k+13) )
+         ENDDO
+         ENDDO
 
       ENDIF
 

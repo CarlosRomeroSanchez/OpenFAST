@@ -657,6 +657,7 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
       CALL LAPACK_gemm( 'N', 'N', 1.0_FeKi, KRL, PhiR, 0.0_FeKi, KBB  , ErrStat2, ErrMsg2); if(Failed()) return
       KBB = KBB + KRR
 
+
       if (present(CRR)) then
          ! Guyan damping CBB = CRR + (CRL*PhiR) + (CRL*PhiR)^T + PhiR^T*CLL*PhiR
          ! PhiR_T_CLL = TRANSPOSE(PhiR) * CLL
@@ -780,11 +781,13 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
       END IF
       
                                               
-      p%FISISK_U = MATMUL(KBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI) ! KBBb * RI
+      p%FISISK_U = KBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__,1:p%nDOFR__-p%nDOFI__)
+      !MATMUL(KBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, p%nDOFR__-p%nDOFI__+1:p%nDOFR__),RI) ! KBBb * RI
 
           
           
-      p%FISISM_U = MATMUL(MBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__,1:p%nDOFR__-p%nDOFI__),RB)  !MIB * RB     
+      p%FISISM_U = MBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__,1:p%nDOFR__-p%nDOFI__)
+      ! MATMUL(MBB(p%nDOFR__-p%nDOFI__+1:p%nDOFR__,1:p%nDOFR__-p%nDOFI__),RB)  !MIB * RB     
       
          IF ( nM .EQ. 0) THEN
 
@@ -806,18 +809,21 @@ SUBROUTINE CraigBamptonReduction_FromPartition(Init, p, MRR, MLL, MRL, KRR, KLL,
         
       ENDDO
       ! Problem 2
-      p%FMSISK_U = MATMUL(NOmegaM2, RM)
+      p%FMSISK_U = 0.0_ReKi
+      !MATMUL(NOmegaM2, RM)
       ! NOmegaM2(I-1) * RM
       !MATMUL(-p%KMMDiag,RM)
       !NOmegaM2(I-1) * matmul(InvPhiM, RL - matmul(PhiR,RR) ) !KMB=0, KLL=OMEGA2  
 
 
-      p%FMSISC_U = MATMUL(OmegaDamp2,RM)
+      p%FMSISC_U = 0.0_ReKi 
+      ! MATMUL(OmegaDamp2,RM)
      ! MATMUL(p%CMMDiag,RM)
       !MATMUL(TRANSPOSE(CBM(p%nDOFR__-p%nDOFI__+1:p%nDOFR__, : )),RI) !+ MATMUL(CMM(:, :)+ OmegaDamp2(I-1,I-1) , MATMUL(InvPhiM, RL - MATMUL(PhiR,RR) )  )
 
 
-      p%FMSISM_U = MATMUL(TRANSPOSE(MBM(1:p%nDOFR__-p%nDOFI__,:)),RB) ! Mmb --> MMB, Mmb * RB
+      p%FMSISM_U = TRANSPOSE(MBM(1:p%nDOFR__-p%nDOFI__,:))
+      !MATMUL(TRANSPOSE(MBM(1:p%nDOFR__-p%nDOFI__,:)),RB) ! Mmb --> MMB, Mmb * RB
       
       DEALLOCATE(OmegaDamp2)
       DEALLOCATE(NOmegaM2)
